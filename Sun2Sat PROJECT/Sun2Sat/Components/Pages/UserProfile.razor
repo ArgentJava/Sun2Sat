@@ -1,0 +1,105 @@
+@page "/u/{UserName}"
+@attribute [Authorize]
+@inject ConnectionService Connections
+@inject EventService Events
+
+<PageTitle>@(profile?.User.NameToShow ?? "Profile")</PageTitle>
+
+@if (loading)
+{
+    <p>Loading…</p>
+}
+else if (profile is null)
+{
+    <h1>User not found</h1>
+    <p>There's no one with the username "@UserName". <a href="connections?tab=find">Search for people</a></p>
+}
+else
+{
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <div>
+            @if (profile.User.HasDisplayName)
+            {
+                <h1 class="mb-0">@profile.User.DisplayName</h1>
+                <div class="text-secondary">@@@profile.User.UserName</div>
+            }
+            else
+            {
+                <h1 class="mb-0">@profile.User.UserName</h1>
+            }
+        </div>
+        <div class="ms-auto">
+            <ConnectButton CurrentUserId="@(userId!)" User="profile.User" State="profile.State"
+                           StateChanged="OnStateChanged" />
+        </div>
+    </div>
+
+    <hr />
+
+    <h5>Next two weeks</h5>
+    @if (schedule.Count == 0)
+    {
+        <p class="text-secondary">Nothing you can see is scheduled.</p>
+    }
+    else
+    {
+        foreach (var group in schedule.GroupBy(i => i.StartLocal.Date))
+        {
+            <h6 class="mt-3">@group.Key.ToString("dddd, MMM d")</h6>
+            foreach (var item in group)
+            {
+                <CalendarItemCard Item="item" />
+            }
+        }
+    }
+    @if (profile.State is not (RelationshipState.Connected or RelationshipState.Self))
+    {
+        <p class="text-secondary small">You're only seeing public events. Connect with @profile.User.NameToShow to see the events they share with connections.</p>
+    }
+
+    @if (profile.State == RelationshipState.Self)
+    {
+        <a href="Account/Manage" class="btn btn-outline-primary btn-sm">Edit your profile</a>
+    }
+}
+
+@code {
+    [Parameter] public string UserName { get; set; } = "";
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private string? userId;
+    private UserWithRelationship? profile;
+    private bool loading = true;
+    private List<CalendarItem> schedule = new();
+
+    // OnParametersSet (not OnInitialized) so going from /u/alex to /u/sam reloads.
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        userId ??= await AuthState.GetUserIdAsync();
+        profile = userId is null ? null : await Connections.GetByUserNameAsync(userId, UserName);
+        await LoadScheduleAsync();
+        loading = false;
+    }
+
+    private async Task LoadScheduleAsync()
+    {
+        if (userId is null || profile is null)
+        {
+            schedule = new();
+            return;
+        }
+        var fromUtc = AppTime.ToUtc(AppTime.NowLocal.Date);
+        schedule = await Events.GetUserScheduleAsync(userId, profile.User.Id, fromUtc, fromUtc.AddDays(14));
+    }
+
+    // Connecting or disconnecting changes which events are visible, so reload them.
+    private async Task OnStateChanged(RelationshipState state)
+    {
+        if (profile is null) return;
+        profile = profile with { State = state };
+        await LoadScheduleAsync();
+    }
+}

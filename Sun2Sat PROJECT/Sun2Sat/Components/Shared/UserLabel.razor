@@ -1,0 +1,19 @@
+@* Shows a user the same way everywhere: "Display Name @username", or just the
+   username when there's no display name. Links to their profile page. *@
+
+<a href="@($"u/{Uri.EscapeDataString(User.UserName)}")" class="text-decoration-none">
+    @if (User.HasDisplayName)
+    {
+        <span class="fw-semibold text-body">@User.DisplayName</span>
+        <span class="text-secondary ms-1">@@@User.UserName</span>
+    }
+    else
+    {
+        <span class="fw-semibold text-body">@User.UserName</span>
+    }
+</a>
+
+@code {
+    [Parameter, EditorRequired]
+    public UserSummary User { get; set; } = default!;
+}

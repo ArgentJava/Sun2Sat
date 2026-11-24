@@ -1,0 +1,190 @@
+@page "/events/{Id:int}"
+@attribute [Authorize]
+@using Sun2Sat.Models
+@inject EventService Events
+@inject NavigationManager Nav
+
+<PageTitle>@(details?.Event.Name ?? "Event")</PageTitle>
+
+@if (loading)
+{
+    <p>Loading…</p>
+    return;
+}
+@if (details is null)
+{
+    <h1>Event not available</h1>
+    <p>It may have been cancelled, or it's shared only with the host's connections.</p>
+    <a href="">Back to your calendar</a>
+    return;
+}
+
+@{
+    var e = details.Event;
+}
+
+<div class="d-flex flex-wrap align-items-start gap-2 mb-2">
+    <div>
+        <h1 class="mb-1">@e.Name</h1>
+        <div class="text-secondary">
+            @if (details.Host is not null)
+            {
+                <span>Hosted by <UserLabel User="details.Host" /></span>
+            }
+            else if (e.Source == EventSource.Official)
+            {
+                <span>Official event @(e.OrganizerName is null ? "" : $"· {e.OrganizerName}")</span>
+            }
+        </div>
+    </div>
+    <span class="badge @(e.Visibility == EventVisibility.Public ? "text-bg-info" : "text-bg-secondary") ms-auto">
+        @(e.Visibility == EventVisibility.Public ? "Public" : "Connections only")
+    </span>
+</div>
+
+<ul class="list-unstyled mb-3">
+    <li>
+        <strong>When:</strong>
+        @FormatRange(occurrenceStartLocal ?? AppTime.ToLocal(e.StartUtc), (occurrenceStartLocal ?? AppTime.ToLocal(e.StartUtc)) + (e.EndUtc - e.StartUtc))
+    </li>
+    @if (e.Recurrence != RecurrenceFrequency.None)
+    {
+        <li><strong>Repeats:</strong> @details.RecurrenceText</li>
+    }
+    @if (!string.IsNullOrWhiteSpace(e.Location))
+    {
+        <li><strong>Where:</strong> @e.Location</li>
+    }
+</ul>
+
+@if (!string.IsNullOrWhiteSpace(e.Description))
+{
+    <p style="white-space: pre-line">@e.Description</p>
+}
+
+@if (message is not null)
+{
+    <div class="alert alert-info py-2">@message</div>
+}
+
+@* ---- actions ---- *@
+@if (details.IsHost)
+{
+    <div class="d-flex gap-2 mb-4">
+        <a class="btn btn-outline-primary" href="@($"events/{e.Id}/edit")">Edit</a>
+        @if (confirmingCancel)
+        {
+            <span class="align-self-center">Cancel this event for everyone?</span>
+            <button class="btn btn-danger" disabled="@busy" @onclick="CancelEventAsync">Yes, cancel it</button>
+            <button class="btn btn-outline-secondary" @onclick="() => confirmingCancel = false">No</button>
+        }
+        else
+        {
+            <button class="btn btn-outline-danger" @onclick="() => confirmingCancel = true">Cancel event</button>
+        }
+    </div>
+}
+else
+{
+    <div class="btn-group mb-4" role="group" aria-label="Your status">
+        <button class="btn @(details.MyStatus == ParticipationStatus.Going ? "btn-success" : "btn-outline-success")"
+                disabled="@busy" @onclick="() => SetStatusAsync(ParticipationStatus.Going)">Going</button>
+        <button class="btn @(details.MyStatus == ParticipationStatus.Interested ? "btn-warning" : "btn-outline-warning")"
+                disabled="@busy" @onclick="() => SetStatusAsync(ParticipationStatus.Interested)">Interested</button>
+        @if (details.MyStatus is not null)
+        {
+            <button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => SetStatusAsync(null)">Remove from my calendar</button>
+        }
+    </div>
+}
+
+@* ---- attendees: everyone who can see the event can see who's going ---- *@
+<h5>
+    Going (@details.Attendees.Count)
+    @if (details.InterestedCount > 0)
+    {
+        <small class="text-secondary fw-normal ms-2">· @details.InterestedCount interested</small>
+    }
+</h5>
+@if (details.Attendees.Count == 0)
+{
+    <p class="text-secondary">No one has said they're going yet.</p>
+}
+else
+{
+    <ul class="list-group list-group-flush">
+        @foreach (var a in details.Attendees)
+        {
+            <li class="list-group-item px-0" @key="a.Id"><UserLabel User="a" /></li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    /// <summary>When opened from a specific occurrence on the calendar (local time, "yyyy-MM-ddTHH:mm").</summary>
+    [SupplyParameterFromQuery(Name = "on")]
+    private string? On { get; set; }
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private string? userId;
+    private EventDetails? details;
+    private DateTime? occurrenceStartLocal;
+    private bool loading = true;
+    private bool busy;
+    private bool confirmingCancel;
+    private string? message;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true;
+        userId ??= await AuthState.GetUserIdAsync();
+        await LoadAsync();
+        occurrenceStartLocal = DateTime.TryParse(On, out var on) ? on : null;
+        loading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        details = userId is null ? null : await Events.GetDetailsAsync(Id, userId);
+    }
+
+    private async Task SetStatusAsync(ParticipationStatus? status)
+    {
+        busy = true;
+        try
+        {
+            await Events.SetParticipationAsync(userId!, Id, status);
+            message = status switch
+            {
+                ParticipationStatus.Going => "You're going. It's on your calendar.",
+                ParticipationStatus.Interested => "Saved to your calendar as interested.",
+                _ => "Removed from your calendar."
+            };
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CancelEventAsync()
+    {
+        busy = true;
+        await Events.CancelAsync(userId!, Id);
+        Nav.NavigateTo("");
+    }
+
+    private static string FormatRange(DateTime start, DateTime end) =>
+        start.Date == end.Date
+            ? $"{start:dddd, MMM d, yyyy} · {start:h:mm tt} – {end:h:mm tt}"
+            : $"{start:ddd, MMM d, h:mm tt} – {end:ddd, MMM d, h:mm tt}";
+}

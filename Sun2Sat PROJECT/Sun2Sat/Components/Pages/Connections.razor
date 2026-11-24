@@ -1,0 +1,218 @@
+@page "/connections"
+@attribute [Authorize]
+@inject ConnectionService ConnectionSvc
+@inject NavRefresh NavRefresh
+
+<PageTitle>Connections</PageTitle>
+
+<h1>Connections</h1>
+
+@if (userId is null)
+{
+    <p>Loading…</p>
+    return;
+}
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button class="nav-link @(tab == "connections" ? "active" : "")" @onclick='() => tab = "connections"'>
+            My connections <span class="badge text-bg-secondary">@connections.Count</span>
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(tab == "requests" ? "active" : "")" @onclick='() => tab = "requests"'>
+            Requests
+            @if (incoming.Count > 0)
+            {
+                <span class="badge text-bg-danger">@incoming.Count</span>
+            }
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(tab == "find" ? "active" : "")" @onclick='() => tab = "find"'>Find people</button>
+    </li>
+</ul>
+
+@if (message is not null)
+{
+    <div class="alert alert-info py-2">@message</div>
+}
+
+@switch (tab)
+{
+    case "requests":
+        <h5>Waiting on you</h5>
+        if (incoming.Count == 0)
+        {
+            <p class="text-secondary">No new requests.</p>
+        }
+        else
+        {
+            <ul class="list-group mb-4">
+                @foreach (var r in incoming)
+                {
+                    <li class="list-group-item d-flex align-items-center justify-content-between" @key="r.ConnectionId">
+                        <div>
+                            <UserLabel User="r.OtherUser" />
+                            <div class="small text-secondary">@r.CreatedAtUtc.ToLocalTime().ToString("MMM d, h:mm tt")</div>
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-success me-1" disabled="@busy" @onclick="() => AcceptAsync(r)">Accept</button>
+                            <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => IgnoreAsync(r)">Ignore</button>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+
+        <h5>Sent by you</h5>
+        if (outgoing.Count == 0)
+        {
+            <p class="text-secondary">No pending requests.</p>
+        }
+        else
+        {
+            <ul class="list-group">
+                @foreach (var r in outgoing)
+                {
+                    <li class="list-group-item d-flex align-items-center justify-content-between" @key="r.ConnectionId">
+                        <UserLabel User="r.OtherUser" />
+                        <button class="btn btn-sm btn-outline-secondary" disabled="@busy" @onclick="() => CancelAsync(r)">Cancel request</button>
+                    </li>
+                }
+            </ul>
+        }
+        break;
+
+    case "find":
+        <form class="d-flex gap-2 mb-3" @onsubmit="SearchAsync">
+            <input class="form-control" placeholder="Search by username or name" @bind="searchText" />
+            <button class="btn btn-primary" type="submit" disabled="@busy">Search</button>
+        </form>
+
+        if (searchResults is null)
+        {
+            <p class="text-secondary">Type at least 2 characters.</p>
+        }
+        else if (searchResults.Count == 0)
+        {
+            <p class="text-secondary">No one matched "@lastSearch".</p>
+        }
+        else
+        {
+            <ul class="list-group">
+                @foreach (var result in searchResults)
+                {
+                    <li class="list-group-item d-flex align-items-center justify-content-between" @key="result.User.Id">
+                        <UserLabel User="result.User" />
+                        <ConnectButton CurrentUserId="@userId" User="result.User" State="result.State"
+                                       StateChanged="_ => ReloadListsAsync()" />
+                    </li>
+                }
+            </ul>
+        }
+        break;
+
+    default:
+        if (connections.Count == 0)
+        {
+            <p class="text-secondary">
+                No connections yet.
+                <button class="btn btn-link p-0 align-baseline" @onclick='() => tab = "find"'>Find people</button> to connect with.
+            </p>
+        }
+        else
+        {
+            <ul class="list-group">
+                @foreach (var c in connections)
+                {
+                    <li class="list-group-item d-flex align-items-center justify-content-between" @key="c.Id">
+                        <UserLabel User="c" />
+                        <ConnectButton CurrentUserId="@userId" User="c" State="RelationshipState.Connected"
+                                       StateChanged="_ => ReloadListsAsync()" />
+                    </li>
+                }
+            </ul>
+        }
+        break;
+}
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    /// <summary>Lets links like /connections?tab=requests open a specific tab.</summary>
+    [SupplyParameterFromQuery(Name = "tab")]
+    private string? TabFromQuery { get; set; }
+
+    private string? userId;
+    private string tab = "connections";
+    private bool busy;
+    private string? message;
+
+    private List<UserSummary> connections = new();
+    private List<ConnectionRequestView> incoming = new();
+    private List<ConnectionRequestView> outgoing = new();
+
+    private string searchText = "";
+    private string lastSearch = "";
+    private List<UserWithRelationship>? searchResults;
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = await AuthState.GetUserIdAsync();
+        if (TabFromQuery is "requests" or "find") tab = TabFromQuery;
+        await ReloadListsAsync();
+    }
+
+    private async Task ReloadListsAsync()
+    {
+        if (userId is null) return;
+        connections = await ConnectionSvc.GetConnectionsAsync(userId);
+        incoming = await ConnectionSvc.GetIncomingRequestsAsync(userId);
+        outgoing = await ConnectionSvc.GetOutgoingRequestsAsync(userId);
+
+        // Keep search results in step with what just changed.
+        if (searchResults is not null && lastSearch.Length >= 2)
+            searchResults = await ConnectionSvc.SearchUsersAsync(userId, lastSearch);
+    }
+
+    private async Task SearchAsync()
+    {
+        if (userId is null) return;
+        lastSearch = searchText.Trim();
+        searchResults = lastSearch.Length < 2 ? null : await ConnectionSvc.SearchUsersAsync(userId, lastSearch);
+    }
+
+    private Task AcceptAsync(ConnectionRequestView r) => RunAsync(
+        () => ConnectionSvc.AcceptAsync(userId!, r.ConnectionId),
+        $"You're now connected with {r.OtherUser.NameToShow}.");
+
+    private Task IgnoreAsync(ConnectionRequestView r) => RunAsync(
+        () => ConnectionSvc.IgnoreAsync(userId!, r.ConnectionId),
+        "Request ignored.");
+
+    private Task CancelAsync(ConnectionRequestView r) => RunAsync(
+        () => ConnectionSvc.CancelRequestAsync(userId!, r.ConnectionId),
+        "Request cancelled.");
+
+    private async Task RunAsync(Func<Task> action, string successMessage)
+    {
+        busy = true;
+        try
+        {
+            await action();
+            message = successMessage;
+            await ReloadListsAsync();
+            await NavRefresh.NotifyChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            message = $"Something went wrong: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

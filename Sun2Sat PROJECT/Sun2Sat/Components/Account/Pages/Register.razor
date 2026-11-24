@@ -1,0 +1,162 @@
+@page "/Account/Register"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using Sun2Sat.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject IUserStore<ApplicationUser> UserStore
+@inject SignInManager<ApplicationUser> SignInManager
+@inject ILogger<Register> Logger
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Register</PageTitle>
+
+<h1>Create your Sun2Sat account</h1>
+
+<div class="row">
+    <div class="col-lg-6">
+        <StatusMessage Message="@Message" />
+        <EditForm Model="Input" method="post" OnValidSubmit="RegisterUser" FormName="register">
+            <DataAnnotationsValidator />
+            <hr />
+            <ValidationSummary class="text-danger" role="alert" />
+
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.UserName" id="Input.UserName" class="form-control" autocomplete="username" aria-required="true" placeholder="username" />
+                <label for="Input.UserName">Username</label>
+                <ValidationMessage For="() => Input.UserName" class="text-danger" />
+            </div>
+
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.DisplayName" id="Input.DisplayName" class="form-control" autocomplete="name" placeholder="Display name" />
+                <label for="Input.DisplayName">Display name (optional)</label>
+                <ValidationMessage For="() => Input.DisplayName" class="text-danger" />
+            </div>
+
+            <p class="text-secondary small mb-2">Give us an email <strong>or</strong> a phone number (or both).</p>
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.Email" id="Input.Email" class="form-control" autocomplete="email" placeholder="name@example.com" />
+                <label for="Input.Email">Email</label>
+                <ValidationMessage For="() => Input.Email" class="text-danger" />
+            </div>
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.PhoneNumber" id="Input.PhoneNumber" class="form-control" autocomplete="tel" placeholder="Phone number" />
+                <label for="Input.PhoneNumber">Phone number</label>
+                <ValidationMessage For="() => Input.PhoneNumber" class="text-danger" />
+            </div>
+
+            <div class="form-floating mb-3">
+                <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="form-control" autocomplete="new-password" aria-required="true" placeholder="password" />
+                <label for="Input.Password">Password</label>
+                <ValidationMessage For="() => Input.Password" class="text-danger" />
+            </div>
+            <div class="form-floating mb-3">
+                <InputText type="password" @bind-Value="Input.ConfirmPassword" id="Input.ConfirmPassword" class="form-control" autocomplete="new-password" aria-required="true" placeholder="password" />
+                <label for="Input.ConfirmPassword">Confirm password</label>
+                <ValidationMessage For="() => Input.ConfirmPassword" class="text-danger" />
+            </div>
+
+            <button type="submit" class="w-100 btn btn-lg btn-primary">Register</button>
+            <p class="mt-3">Already have an account? <a href="Account/Login">Log in</a></p>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private IEnumerable<IdentityError>? identityErrors;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private string? Message => identityErrors is null ? null : $"Error: {string.Join(", ", identityErrors.Select(error => error.Description))}";
+
+    protected override void OnInitialized()
+    {
+        Input ??= new();
+    }
+
+    public async Task RegisterUser(EditContext editContext)
+    {
+        var user = new ApplicationUser
+        {
+            DisplayName = Clean(Input.DisplayName),
+            PhoneNumber = Clean(Input.PhoneNumber),
+            NotificationsEnabled = true
+        };
+
+        // The username is the login name. Identity enforces uniqueness and
+        // returns "Username 'x' is already taken." if it's in use.
+        await UserStore.SetUserNameAsync(user, Input.UserName.Trim(), CancellationToken.None);
+
+        var email = Clean(Input.Email);
+        if (email is not null)
+        {
+            var emailStore = (IUserEmailStore<ApplicationUser>)UserStore;
+            await emailStore.SetEmailAsync(user, email, CancellationToken.None);
+        }
+
+        var result = await UserManager.CreateAsync(user, Input.Password);
+        if (!result.Succeeded)
+        {
+            identityErrors = result.Errors;
+            return;
+        }
+
+        Logger.LogInformation("User {UserName} created a new account.", user.UserName);
+
+        // No email confirmation step: notifications are in-app only for now.
+        await SignInManager.SignInAsync(user, isPersistent: false);
+        RedirectManager.RedirectTo(ReturnUrl);
+    }
+
+    /// <summary>Turns blank input into null and trims the rest.</summary>
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private sealed class InputModel : IValidatableObject
+    {
+        [Required]
+        [StringLength(30, MinimumLength = 3, ErrorMessage = "The {0} must be {2} to {1} characters.")]
+        [RegularExpression(@"^[A-Za-z0-9._-]+$", ErrorMessage = "Usernames can use letters, numbers, dots, dashes and underscores.")]
+        [Display(Name = "Username")]
+        public string UserName { get; set; } = "";
+
+        [StringLength(60)]
+        [Display(Name = "Display name")]
+        public string? DisplayName { get; set; }
+
+        [EmailAddress]
+        [Display(Name = "Email")]
+        public string? Email { get; set; }
+
+        [Phone]
+        [Display(Name = "Phone number")]
+        public string? PhoneNumber { get; set; }
+
+        [Required]
+        [StringLength(100, ErrorMessage = "The {0} must be at least {2} and at max {1} characters long.", MinimumLength = 6)]
+        [DataType(DataType.Password)]
+        [Display(Name = "Password")]
+        public string Password { get; set; } = "";
+
+        [DataType(DataType.Password)]
+        [Display(Name = "Confirm password")]
+        [Compare("Password", ErrorMessage = "The password and confirmation password do not match.")]
+        public string ConfirmPassword { get; set; } = "";
+
+        // Runs after the per-field checks pass: require email OR phone.
+        public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+        {
+            if (string.IsNullOrWhiteSpace(Email) && string.IsNullOrWhiteSpace(PhoneNumber))
+            {
+                yield return new ValidationResult(
+                    "Please enter an email or a phone number.",
+                    new[] { nameof(Email) });
+            }
+        }
+    }
+}

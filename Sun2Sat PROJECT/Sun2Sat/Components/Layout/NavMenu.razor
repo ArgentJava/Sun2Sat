@@ -1,0 +1,123 @@
+@implements IDisposable
+
+@inject NavigationManager NavigationManager
+@inject ConnectionService Connections
+@inject NavRefresh NavRefresh
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">Sun2Sat</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Calendar
+            </NavLink>
+        </div>
+
+        <AuthorizeView>
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="events/add">
+                        <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Add event
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="connections">
+                        <span class="bi bi-people-fill-nav-menu" aria-hidden="true"></span> Connections
+                        @if (pendingRequests > 0)
+                        {
+                            <span class="badge rounded-pill text-bg-danger ms-2">@pendingRequests</span>
+                        }
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="Account/Manage">
+                        <span class="bi bi-person-fill-nav-menu" aria-hidden="true"></span>
+                        @(me?.NameToShow ?? context.User.Identity?.Name)
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <form action="Account/Logout" method="post">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="ReturnUrl" value="@currentUrl" />
+                        <button type="submit" class="nav-link">
+                            <span class="bi bi-arrow-bar-left-nav-menu" aria-hidden="true"></span> Logout
+                        </button>
+                    </form>
+                </div>
+            </Authorized>
+            <NotAuthorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="Account/Register">
+                        <span class="bi bi-person-nav-menu" aria-hidden="true"></span> Register
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="Account/Login">
+                        <span class="bi bi-person-badge-nav-menu" aria-hidden="true"></span> Login
+                    </NavLink>
+                </div>
+            </NotAuthorized>
+        </AuthorizeView>
+    </nav>
+</div>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private string? currentUrl;
+    private UserSummary? me;
+    private int pendingRequests;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        NavigationManager.LocationChanged += OnLocationChanged;
+        NavRefresh.Changed += OnNavRefresh;
+        await LoadUserInfoAsync();
+    }
+
+    private async Task LoadUserInfoAsync()
+    {
+        var userId = await AuthState.GetUserIdAsync();
+        if (userId is null)
+        {
+            me = null;
+            pendingRequests = 0;
+            return;
+        }
+
+        me = await Connections.GetSummaryAsync(userId);
+        pendingRequests = await Connections.CountIncomingRequestsAsync(userId);
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        currentUrl = NavigationManager.ToBaseRelativePath(e.Location);
+        // Refresh the badge on every page change too.
+        _ = InvokeAsync(async () =>
+        {
+            await LoadUserInfoAsync();
+            StateHasChanged();
+        });
+    }
+
+    private Task OnNavRefresh() => InvokeAsync(async () =>
+    {
+        await LoadUserInfoAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= OnLocationChanged;
+        NavRefresh.Changed -= OnNavRefresh;
+    }
+}

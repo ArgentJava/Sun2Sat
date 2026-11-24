@@ -1,0 +1,85 @@
+@* The one button that changes with the relationship: Connect / Request sent /
+   Accept / Connected (with Remove). Used in search results and on profile pages. *@
+@inject ConnectionService Connections
+@inject NavRefresh NavRefresh
+
+@switch (State)
+{
+    case RelationshipState.Self:
+        <span class="badge text-bg-light">This is you</span>
+        break;
+
+    case RelationshipState.None:
+        <button class="btn btn-sm btn-primary" disabled="@busy" @onclick="SendAsync">Connect</button>
+        break;
+
+    case RelationshipState.RequestSent:
+        <button class="btn btn-sm btn-outline-secondary" disabled>Request sent</button>
+        break;
+
+    case RelationshipState.RequestReceived:
+        <button class="btn btn-sm btn-success" disabled="@busy" @onclick="SendAsync">Accept request</button>
+        break;
+
+    case RelationshipState.Connected:
+        if (confirmingRemove)
+        {
+            <span class="me-2 small">Remove this connection?</span>
+            <button class="btn btn-sm btn-danger me-1" disabled="@busy" @onclick="RemoveAsync">Remove</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => confirmingRemove = false">Keep</button>
+        }
+        else
+        {
+            <span class="badge text-bg-success me-2">Connected</span>
+            <button class="btn btn-sm btn-link text-danger p-0" @onclick="() => confirmingRemove = true">Remove</button>
+        }
+        break;
+}
+@if (error is not null)
+{
+    <div class="text-danger small mt-1">@error</div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string CurrentUserId { get; set; } = default!;
+    [Parameter, EditorRequired] public UserSummary User { get; set; } = default!;
+    [Parameter, EditorRequired] public RelationshipState State { get; set; }
+
+    /// <summary>Lets the parent refresh its lists after a change.</summary>
+    [Parameter] public EventCallback<RelationshipState> StateChanged { get; set; }
+
+    private bool busy;
+    private bool confirmingRemove;
+    private string? error;
+
+    // "Accept request" also goes through SendRequestAsync: asking someone who already
+    // asked you counts as accepting (see ConnectionService.SendRequestAsync).
+    private Task SendAsync() => RunAsync(() => Connections.SendRequestAsync(CurrentUserId, User.Id));
+
+    private Task RemoveAsync() => RunAsync(async () =>
+    {
+        await Connections.RemoveConnectionAsync(CurrentUserId, User.Id);
+        confirmingRemove = false;
+        return RelationshipState.None;
+    });
+
+    private async Task RunAsync(Func<Task<RelationshipState>> action)
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            State = await action();
+            await StateChanged.InvokeAsync(State);
+            await NavRefresh.NotifyChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

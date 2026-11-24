@@ -1,0 +1,245 @@
+@page "/events/new"
+@page "/events/{Id:int}/edit"
+@attribute [Authorize]
+@using Sun2Sat.Models
+@inject EventService Events
+@inject NavigationManager Nav
+
+<PageTitle>@(IsEdit ? "Edit event" : "New event")</PageTitle>
+
+<h1>@(IsEdit ? "Edit event" : "New event")</h1>
+
+@if (notFound)
+{
+    <p>This event doesn't exist, or you're not the one who created it.</p>
+    return;
+}
+@if (model is null)
+{
+    <p>Loading…</p>
+    return;
+}
+
+<div class="row">
+    <div class="col-lg-8">
+        <EditForm Model="model" OnValidSubmit="SaveAsync">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-danger" />
+
+            <div class="mb-3">
+                <label class="form-label" for="name">Name</label>
+                <InputText id="name" class="form-control" @bind-Value="model.Name" />
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label" for="start">Start</label>
+                    <InputDate Type="InputDateType.DateTimeLocal" id="start" class="form-control"
+                               @bind-Value="model.StartLocal" @bind-Value:after="KeepDuration" />
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label" for="end">End</label>
+                    <InputDate Type="InputDateType.DateTimeLocal" id="end" class="form-control"
+                               @bind-Value="model.EndLocal" @bind-Value:after="RememberDuration" />
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label" for="location">Location</label>
+                <InputText id="location" class="form-control" @bind-Value="model.Location" placeholder="Optional" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label" for="description">Details</label>
+                <InputTextArea id="description" class="form-control" rows="3" @bind-Value="model.Description" placeholder="Optional" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Who can see it</label>
+                <InputRadioGroup @bind-Value="model.Visibility">
+                    <div class="form-check">
+                        <InputRadio class="form-check-input" id="vis-conn" Value="EventVisibility.Connections" />
+                        <label class="form-check-label" for="vis-conn">My connections</label>
+                    </div>
+                    <div class="form-check">
+                        <InputRadio class="form-check-input" id="vis-public" Value="EventVisibility.Public" />
+                        <label class="form-check-label" for="vis-public">Everyone (public, shows up in search)</label>
+                    </div>
+                </InputRadioGroup>
+            </div>
+
+            <fieldset class="border rounded p-3 mb-3">
+                <legend class="float-none w-auto px-2 fs-6">Repeat</legend>
+
+                <div class="row g-2 align-items-center mb-2">
+                    <div class="col-auto">
+                        <InputSelect class="form-select" @bind-Value="model.Recurrence" @bind-Value:after="OnRecurrenceChanged">
+                            <option value="@RecurrenceFrequency.None">Does not repeat</option>
+                            <option value="@RecurrenceFrequency.Daily">Daily</option>
+                            <option value="@RecurrenceFrequency.Weekly">Weekly</option>
+                            <option value="@RecurrenceFrequency.Monthly">Monthly</option>
+                        </InputSelect>
+                    </div>
+                    @if (model.Recurrence != RecurrenceFrequency.None)
+                    {
+                        <div class="col-auto">every</div>
+                        <div class="col-auto" style="width: 6rem">
+                            <InputNumber class="form-control" @bind-Value="model.RecurrenceInterval" min="1" max="52" />
+                        </div>
+                        <div class="col-auto">@UnitLabel</div>
+                    }
+                </div>
+
+                @if (model.Recurrence == RecurrenceFrequency.Weekly)
+                {
+                    <div class="d-flex flex-wrap gap-3 mb-2">
+                        @foreach (var day in Enum.GetValues<DayOfWeek>())
+                        {
+                            @* Plain checkboxes: InputCheckbox can't bind to one bit of a flags enum. *@
+                            <label class="form-check-label">
+                                <input type="checkbox" class="form-check-input me-1"
+                                       checked="@model.HasDay(day)"
+                                       @onchange="e => model.SetDay(day, e.Value is true)" />
+                                @(day.ToString()[..3])
+                            </label>
+                        }
+                    </div>
+                }
+
+                @if (model.Recurrence != RecurrenceFrequency.None)
+                {
+                    <div class="row g-2 align-items-center">
+                        <div class="col-auto"><label for="until">Until</label></div>
+                        <div class="col-auto">
+                            <InputDate id="until" class="form-control" @bind-Value="model.RecurrenceUntil" />
+                        </div>
+                        <div class="col-auto text-secondary small">Leave blank to repeat with no end date.</div>
+                    </div>
+                }
+            </fieldset>
+
+            @if (error is not null)
+            {
+                <div class="alert alert-danger">@error</div>
+            }
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary" disabled="@saving">@(IsEdit ? "Save changes" : "Create event")</button>
+                <a class="btn btn-outline-secondary" href="@(IsEdit ? $"events/{Id}" : "")">Cancel</a>
+            </div>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    [SupplyParameterFromQuery(Name = "template")]
+    private int? TemplateId { get; set; }
+
+    /// <summary>yyyy-MM-dd, from the calendar's "+" on a day.</summary>
+    [SupplyParameterFromQuery(Name = "date")]
+    private string? Date { get; set; }
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private bool IsEdit => Id is not null;
+    private string? userId;
+    private EventFormModel? model;
+    private TimeSpan duration = TimeSpan.FromHours(1);
+    private bool notFound;
+    private bool saving;
+    private string? error;
+
+    private string UnitLabel => (model!.Recurrence, model.RecurrenceInterval == 1) switch
+    {
+        (RecurrenceFrequency.Daily, true) => "day",
+        (RecurrenceFrequency.Daily, false) => "days",
+        (RecurrenceFrequency.Weekly, true) => "week",
+        (RecurrenceFrequency.Weekly, false) => "weeks",
+        (RecurrenceFrequency.Monthly, true) => "month",
+        _ => "months"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = await AuthState.GetUserIdAsync();
+        if (userId is null) return;
+
+        if (IsEdit)
+        {
+            var existing = await Events.GetForEditAsync(Id!.Value, userId);
+            if (existing is null)
+            {
+                notFound = true;
+                return;
+            }
+            model = EventFormModel.FromEvent(existing);
+            duration = model.EndLocal - model.StartLocal;
+            return;
+        }
+
+        // New event: start at the next whole hour, on the chosen day if one was passed in.
+        var now = AppTime.NowLocal;
+        var start = now.Date.AddHours(now.Hour + 1);
+        if (DateOnly.TryParse(Date, out var day))
+            start = day.ToDateTime(new TimeOnly(start.Hour, 0));
+
+        model = new EventFormModel { StartLocal = start };
+
+        if (TemplateId is not null)
+        {
+            var template = (await Events.GetTemplatesAsync()).FirstOrDefault(t => t.Id == TemplateId);
+            if (template is not null)
+            {
+                model.Name = template.Name;
+                model.Description = template.DefaultDescription;
+                model.TemplateId = template.Id;
+                duration = TimeSpan.FromMinutes(template.DefaultDurationMinutes);
+            }
+        }
+
+        model.EndLocal = model.StartLocal + duration;
+    }
+
+    // Moving the start moves the end with it, keeping the same length.
+    private void KeepDuration() => model!.EndLocal = model.StartLocal + duration;
+
+    private void RememberDuration()
+    {
+        if (model!.EndLocal > model.StartLocal) duration = model.EndLocal - model.StartLocal;
+    }
+
+    private void OnRecurrenceChanged()
+    {
+        // Picking Weekly pre-ticks the start's weekday.
+        if (model!.Recurrence == RecurrenceFrequency.Weekly && model.RecurrenceDays == DaysOfWeekMask.None)
+            model.SetDay(model.StartLocal.DayOfWeek, true);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (userId is null || model is null) return;
+        saving = true;
+        error = null;
+        try
+        {
+            var eventId = Id ?? 0;
+            if (IsEdit)
+                await Events.UpdateAsync(userId, eventId, model);
+            else
+                eventId = await Events.CreateAsync(userId, model);
+
+            Nav.NavigateTo($"events/{eventId}");
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

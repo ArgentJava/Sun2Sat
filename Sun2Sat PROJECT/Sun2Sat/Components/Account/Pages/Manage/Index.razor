@@ -1,0 +1,173 @@
+@page "/Account/Manage"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using Sun2Sat.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Profile</PageTitle>
+
+<h3>Profile</h3>
+<StatusMessage />
+
+@if (user is not null)
+{
+    @* How other users will see you. *@
+    <div class="mb-4">
+        @if (string.IsNullOrWhiteSpace(user.DisplayName))
+        {
+            <span class="fs-4 fw-semibold">@user.UserName</span>
+        }
+        else
+        {
+            <span class="fs-4 fw-semibold">@user.DisplayName</span>
+            <span class="text-secondary ms-1">@@@user.UserName</span>
+        }
+    </div>
+}
+
+<div class="row">
+    <div class="col-xl-6">
+        <EditForm Model="Input" FormName="profile" OnValidSubmit="OnValidSubmitAsync" method="post">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-danger" role="alert" />
+
+            <div class="form-floating mb-3">
+                <input type="text" value="@user?.UserName" id="username" class="form-control" placeholder="Username" disabled />
+                <label for="username" class="form-label">Username (used to log in)</label>
+            </div>
+
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.DisplayName" id="Input.DisplayName" class="form-control" placeholder="Display name" />
+                <label for="Input.DisplayName" class="form-label">Display name (optional)</label>
+                <ValidationMessage For="() => Input.DisplayName" class="text-danger" />
+            </div>
+
+            <p class="text-secondary small mb-2">Keep at least one of these filled in.</p>
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.Email" id="Input.Email" class="form-control" placeholder="name@example.com" />
+                <label for="Input.Email" class="form-label">Email</label>
+                <ValidationMessage For="() => Input.Email" class="text-danger" />
+            </div>
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.PhoneNumber" id="Input.PhoneNumber" class="form-control" placeholder="Phone number" />
+                <label for="Input.PhoneNumber" class="form-label">Phone number</label>
+                <ValidationMessage For="() => Input.PhoneNumber" class="text-danger" />
+            </div>
+
+            <div class="form-check form-switch mb-3">
+                <InputCheckbox @bind-Value="Input.NotificationsEnabled" id="Input.NotificationsEnabled" class="form-check-input" role="switch" />
+                <label for="Input.NotificationsEnabled" class="form-check-label">In-app notifications</label>
+            </div>
+
+            <button type="submit" class="w-100 btn btn-lg btn-primary">Save</button>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private ApplicationUser? user;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Input is null on a normal page load (GET) and filled in from the form on Save (POST).
+        var isFormPost = Input is not null;
+        Input ??= new();
+
+        user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        // Only pre-fill on GET; on POST we must keep what the user typed
+        // (including blanks and an unticked checkbox).
+        if (!isFormPost)
+        {
+            Input.DisplayName = user.DisplayName;
+            Input.Email = user.Email;
+            Input.PhoneNumber = user.PhoneNumber;
+            Input.NotificationsEnabled = user.NotificationsEnabled;
+        }
+    }
+
+    private async Task OnValidSubmitAsync()
+    {
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        user.DisplayName = Clean(Input.DisplayName);
+        user.NotificationsEnabled = Input.NotificationsEnabled;
+
+        // Email is set directly here (no confirmation link) because the app doesn't send email yet.
+        var email = Clean(Input.Email);
+        if (!string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            var setEmail = await UserManager.SetEmailAsync(user, email);
+            if (!setEmail.Succeeded)
+            {
+                RedirectManager.RedirectToCurrentPageWithStatus("Error: Failed to update email.", HttpContext);
+                return;
+            }
+        }
+
+        // PhoneNumber is a plain column on the user, so set it with everything else
+        // and save once with UpdateAsync.
+        user.PhoneNumber = Clean(Input.PhoneNumber);
+
+        var result = await UserManager.UpdateAsync(user);
+        if (!result.Succeeded)
+        {
+            var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+            RedirectManager.RedirectToCurrentPageWithStatus($"Error: {errors}", HttpContext);
+            return;
+        }
+
+        await SignInManager.RefreshSignInAsync(user);
+        RedirectManager.RedirectToCurrentPageWithStatus("Your profile has been updated", HttpContext);
+    }
+
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private sealed class InputModel : IValidatableObject
+    {
+        [StringLength(60)]
+        [Display(Name = "Display name")]
+        public string? DisplayName { get; set; }
+
+        [EmailAddress]
+        [Display(Name = "Email")]
+        public string? Email { get; set; }
+
+        [Phone]
+        [Display(Name = "Phone number")]
+        public string? PhoneNumber { get; set; }
+
+        [Display(Name = "In-app notifications")]
+        public bool NotificationsEnabled { get; set; }
+
+        public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+        {
+            if (string.IsNullOrWhiteSpace(Email) && string.IsNullOrWhiteSpace(PhoneNumber))
+            {
+                yield return new ValidationResult(
+                    "Keep an email or a phone number on your account.",
+                    new[] { nameof(Email) });
+            }
+        }
+    }
+}

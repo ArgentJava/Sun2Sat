@@ -1,0 +1,44 @@
+@* One occurrence as a small colored card. Used in the week grid, the list view and on profiles.
+   The ?on= value tells the event page which occurrence of a repeating event was clicked. *@
+
+<a class="cal-item cal-@Item.Kind.ToString().ToLowerInvariant()"
+   href="@($"events/{Item.EventId}?on={Item.StartLocal:yyyy-MM-ddTHH:mm}")">
+    <div class="cal-time">
+        @Item.StartLocal.ToString("h:mm tt") – @Item.EndLocal.ToString("h:mm tt")
+        @if (Item.IsRecurring)
+        {
+            <span title="Repeats" aria-label="Repeats">↻</span>
+        }
+    </div>
+    <div class="cal-name">@Item.Name</div>
+    @if (ShowDetails)
+    {
+        if (!string.IsNullOrWhiteSpace(Item.Location))
+        {
+            <div class="cal-sub">@Item.Location</div>
+        }
+        if (Item.Kind != CalendarItemKind.Mine && Item.Host is not null)
+        {
+            <div class="cal-sub">@Item.Host.NameToShow · @KindLabel</div>
+        }
+        else if (Item.Kind == CalendarItemKind.Mine)
+        {
+            <div class="cal-sub">@KindLabel</div>
+        }
+    }
+</a>
+
+@code {
+    [Parameter, EditorRequired] public CalendarItem Item { get; set; } = default!;
+
+    /// <summary>Show location and host lines (the narrow week grid can turn these off).</summary>
+    [Parameter] public bool ShowDetails { get; set; } = true;
+
+    private string KindLabel => Item.Kind switch
+    {
+        CalendarItemKind.Mine => "Your event",
+        CalendarItemKind.Going => "Going",
+        CalendarItemKind.Interested => "Interested",
+        _ => "Connection's event"
+    };
+}

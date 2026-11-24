@@ -1,0 +1,68 @@
+@page "/events/add"
+@attribute [Authorize]
+@inject EventService Events
+
+<PageTitle>Add event</PageTitle>
+
+<h1>Add an event</h1>
+
+<div class="row g-3 mt-1">
+    @* Option 1: search existing events, built in Step 5. *@
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Find an existing event</h5>
+                <p class="card-text text-secondary">Search events other people made, plus official events like concerts and fairs.</p>
+                <button class="btn btn-outline-secondary" disabled>Coming in the next step</button>
+            </div>
+        </div>
+    </div>
+
+    @* Option 2: general events (templates). *@
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">General event</h5>
+                <p class="card-text text-secondary">Everyday things. Pick one and just choose the time.</p>
+                <div class="d-flex flex-wrap gap-2">
+                    @foreach (var t in templates)
+                    {
+                        <a class="btn btn-outline-primary btn-sm" href="@NewEventUrl(t.Id)">@t.Name</a>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* Option 3: custom event. *@
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Custom event</h5>
+                <p class="card-text text-secondary">Your own event with a name, time, place and details.</p>
+                <a class="btn btn-primary" href="@NewEventUrl(null)">Create custom event</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>Passed through from the calendar's "+" on a specific day.</summary>
+    [SupplyParameterFromQuery(Name = "date")]
+    private string? Date { get; set; }
+
+    private List<Models.EventTemplate> templates = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        templates = await Events.GetTemplatesAsync();
+    }
+
+    private string NewEventUrl(int? templateId)
+    {
+        var query = new List<string>();
+        if (templateId is not null) query.Add($"template={templateId}");
+        if (!string.IsNullOrEmpty(Date)) query.Add($"date={Uri.EscapeDataString(Date)}");
+        return "events/new" + (query.Count > 0 ? "?" + string.Join("&", query) : "");
+    }
+}

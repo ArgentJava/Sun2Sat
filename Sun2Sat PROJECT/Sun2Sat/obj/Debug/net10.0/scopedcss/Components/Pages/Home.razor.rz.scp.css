@@ -1,0 +1,75 @@
+/* Sunday-to-Saturday grid. Collapses to one column on narrow screens. */
+.week-grid[b-7shi7j08vt] {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.5rem;
+}
+
+.week-day[b-7shi7j08vt] {
+    min-height: 14rem;
+    padding: 0.4rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    background: #fff;
+}
+
+.week-day.is-today[b-7shi7j08vt] {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 1px #0d6efd inset;
+}
+
+.week-day-header[b-7shi7j08vt] {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.85rem;
+    color: #6c757d;
+}
+
+.week-day-num[b-7shi7j08vt] {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #212529;
+}
+
+.is-today .week-day-num[b-7shi7j08vt] {
+    color: #0d6efd;
+}
+
+.week-day-add[b-7shi7j08vt] {
+    margin-left: auto;
+    text-decoration: none;
+    font-weight: 700;
+    padding: 0 0.35rem;
+    border-radius: 0.25rem;
+}
+
+.week-day-add:hover[b-7shi7j08vt] {
+    background: #e7f1ff;
+}
+
+@media (max-width: 767.98px) {
+    .week-grid[b-7shi7j08vt] {
+        grid-template-columns: 1fr;
+    }
+
+    .week-day[b-7shi7j08vt] {
+        min-height: auto;
+    }
+}
+
+/* Legend swatches (same colors as CalendarItemCard). */
+.legend[b-7shi7j08vt] {
+    display: inline-block;
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 0.2rem;
+    vertical-align: -0.1rem;
+    border-left: 4px solid;
+}
+
+.legend-mine[b-7shi7j08vt] { background: #e7f1ff; border-color: #0d6efd; }
+.legend-going[b-7shi7j08vt] { background: #e6f4ea; border-color: #198754; }
+.legend-interested[b-7shi7j08vt] { background: #fff8e1; border-color: #f0ad00; }
+.legend-connection[b-7shi7j08vt] { background: #f1f3f5; border-color: #6c757d; }
